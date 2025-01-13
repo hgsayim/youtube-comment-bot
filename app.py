@@ -24,6 +24,21 @@ should_comment = False
 commented_videos = set()  # Yorum yapılan videoları takip etmek için
 log_entries = []  # Log kayıtlarını tutmak için
 
+def get_data_dir():
+    """Get the data directory based on environment"""
+    if 'PYTHONANYWHERE_DOMAIN' in os.environ:
+        # PythonAnywhere'de isek
+        return os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
+    else:
+        # Lokal geliştirme ortamında isek
+        return tempfile.gettempdir()
+
+# Uygulama başladığında data klasörünü oluştur
+if 'PYTHONANYWHERE_DOMAIN' in os.environ:
+    data_dir = get_data_dir()
+    if not os.path.exists(data_dir):
+        os.makedirs(data_dir)
+
 def save_credentials_temp(client_id, client_secret):
     credentials = {
         "installed": {
@@ -37,8 +52,8 @@ def save_credentials_temp(client_id, client_secret):
         }
     }
     
-    temp_dir = tempfile.gettempdir()
-    credentials_path = os.path.join(temp_dir, 'client_secrets.json')
+    data_dir = get_data_dir()
+    credentials_path = os.path.join(data_dir, 'client_secrets.json')
     
     with open(credentials_path, 'w') as f:
         json.dump(credentials, f)
@@ -47,8 +62,8 @@ def save_credentials_temp(client_id, client_secret):
 
 def get_youtube_credentials():
     creds = None
-    temp_dir = tempfile.gettempdir()
-    token_path = os.path.join(temp_dir, 'token.pickle')
+    data_dir = get_data_dir()
+    token_path = os.path.join(data_dir, 'token.pickle')
     
     if os.path.exists(token_path):
         with open(token_path, 'rb') as token:
@@ -58,7 +73,7 @@ def get_youtube_credentials():
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            credentials_path = os.path.join(temp_dir, 'client_secrets.json')
+            credentials_path = os.path.join(data_dir, 'client_secrets.json')
             if not os.path.exists(credentials_path):
                 return None
                 
@@ -97,8 +112,8 @@ def comment_worker(search_query, comment_text, interval):
     youtube = build(API_SERVICE_NAME, API_VERSION, credentials=credentials)
     
     # Temp dosyadan önceki yorumları yükle
-    temp_dir = tempfile.gettempdir()
-    comments_file = os.path.join(temp_dir, 'commented_videos.json')
+    data_dir = get_data_dir()
+    comments_file = os.path.join(data_dir, 'commented_videos.json')
     if os.path.exists(comments_file):
         with open(comments_file, 'r') as f:
             commented_videos = set(json.load(f))
@@ -109,19 +124,17 @@ def comment_worker(search_query, comment_text, interval):
             search_response = youtube.search().list(
                 q=search_query,
                 part='id,snippet',
-                maxResults=5,  # 5 video al
+                maxResults=5,
                 type='video',
-                order='date'  # En yeni videolar
+                order='date'
             ).execute()
 
             if not search_response.get('items'):
                 add_log_entry("", "Arama Sonucu Bulunamadı", comment_text,
                             success=False, error_message=f"'{search_query}' için video bulunamadı")
-                time.sleep(interval * 60)  # Belirtilen süre kadar bekle
+                time.sleep(interval * 60)
                 continue
 
-            videos_commented = 0  # Bu döngüde yorum yapılan video sayısı
-            
             for video in search_response.get('items', []):
                 if not should_comment:
                     break
@@ -129,12 +142,10 @@ def comment_worker(search_query, comment_text, interval):
                 video_id = video['id']['videoId']
                 video_title = video['snippet']['title']
                 
-                # Eğer bu videoya daha önce yorum yapıldıysa, atla
                 if video_id in commented_videos:
                     continue
                 
                 try:
-                    # Video durumunu kontrol et
                     video_response = youtube.videos().list(
                         part='status',
                         id=video_id
@@ -151,7 +162,6 @@ def comment_worker(search_query, comment_text, interval):
                                     success=False, error_message="Video yorumlara kapalı")
                         continue
 
-                    # Yorum yap
                     youtube.commentThreads().insert(
                         part="snippet",
                         body={
@@ -166,15 +176,19 @@ def comment_worker(search_query, comment_text, interval):
                         }
                     ).execute()
                     
-                    # Başarılı yorumu kaydet
                     commented_videos.add(video_id)
-                    videos_commented += 1
                     
-                    # Temp dosyaya kaydet
+                    # Yorum yapılan videoları kaydet
                     with open(comments_file, 'w') as f:
                         json.dump(list(commented_videos), f)
                     
+                    # Log dosyasını kaydet
                     add_log_entry(video_id, video_title, comment_text, success=True)
+                    
+                    # Log dosyasını diske yaz
+                    log_file = os.path.join(data_dir, 'comment_logs.json')
+                    with open(log_file, 'w', encoding='utf-8') as f:
+                        json.dump(log_entries, f, ensure_ascii=False, indent=2)
                     
                 except Exception as e:
                     error_msg = str(e)
@@ -193,10 +207,14 @@ def comment_worker(search_query, comment_text, interval):
                     add_log_entry(video_id, video_title, comment_text,
                                 success=False, error_message=error_msg)
                     
+                    # Hata loglarını da diske yaz
+                    log_file = os.path.join(data_dir, 'comment_logs.json')
+                    with open(log_file, 'w', encoding='utf-8') as f:
+                        json.dump(log_entries, f, ensure_ascii=False, indent=2)
+                    
                     if not should_comment:
                         break
             
-            # 5 video işlendikten sonra belirtilen süre kadar bekle
             time.sleep(interval * 60)
 
         except Exception as e:
@@ -214,15 +232,27 @@ def comment_worker(search_query, comment_text, interval):
             add_log_entry("", "API Hatası", comment_text,
                          success=False, error_message=error_msg)
             
+            # Hata loglarını diske yaz
+            log_file = os.path.join(data_dir, 'comment_logs.json')
+            with open(log_file, 'w', encoding='utf-8') as f:
+                json.dump(log_entries, f, ensure_ascii=False, indent=2)
+            
             if not should_comment:
                 break
             time.sleep(60)
 
 @app.route('/')
 def home():
-    temp_dir = tempfile.gettempdir()
-    credentials_path = os.path.join(temp_dir, 'client_secrets.json')
+    data_dir = get_data_dir()
+    credentials_path = os.path.join(data_dir, 'client_secrets.json')
     has_credentials = os.path.exists(credentials_path)
+    
+    # Log dosyasını oku
+    log_file = os.path.join(data_dir, 'comment_logs.json')
+    if os.path.exists(log_file):
+        with open(log_file, 'r', encoding='utf-8') as f:
+            global log_entries
+            log_entries = json.load(f)
     
     if has_credentials:
         with open(credentials_path, 'r') as f:
