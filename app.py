@@ -33,11 +33,20 @@ def get_data_dir():
         # Lokal geliştirme ortamında isek
         return tempfile.gettempdir()
 
-# Uygulama başladığında data klasörünü oluştur
+def initialize_logs():
+    """Initialize log file if it doesn't exist"""
+    data_dir = get_data_dir()
+    log_file = os.path.join(data_dir, 'comment_logs.json')
+    if not os.path.exists(log_file):
+        with open(log_file, 'w', encoding='utf-8') as f:
+            json.dump([], f)
+
+# Uygulama başladığında data klasörünü ve log dosyasını oluştur
 if 'PYTHONANYWHERE_DOMAIN' in os.environ:
     data_dir = get_data_dir()
     if not os.path.exists(data_dir):
-        os.makedirs(data_dir)
+        os.makedirs(data_dir, mode=0o777)
+    initialize_logs()
 
 def save_credentials_temp(client_id, client_secret):
     credentials = {
@@ -87,6 +96,20 @@ def get_youtube_credentials():
 
 def add_log_entry(video_id, video_title, comment_text, success=True, error_message=None):
     global log_entries
+    data_dir = get_data_dir()
+    log_file = os.path.join(data_dir, 'comment_logs.json')
+    
+    # Mevcut logları oku
+    try:
+        if os.path.exists(log_file):
+            with open(log_file, 'r', encoding='utf-8') as f:
+                log_entries = json.load(f)
+        else:
+            log_entries = []
+    except Exception:
+        log_entries = []
+    
+    # Yeni log ekle
     entry = {
         'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         'video_id': video_id,
@@ -96,9 +119,18 @@ def add_log_entry(video_id, video_title, comment_text, success=True, error_messa
         'success': success,
         'error_message': error_message
     }
-    log_entries.insert(0, entry)  # En yeni log en üstte olsun
-    if len(log_entries) > 100:  # Maksimum 100 log tutalım
-        log_entries.pop()
+    log_entries.insert(0, entry)
+    
+    # Maksimum 100 log tut
+    if len(log_entries) > 100:
+        log_entries = log_entries[:100]
+    
+    # Logları kaydet
+    try:
+        with open(log_file, 'w', encoding='utf-8') as f:
+            json.dump(log_entries, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"Log kaydetme hatası: {str(e)}")
 
 def comment_worker(search_query, comment_text, interval):
     global should_comment, commented_videos
@@ -249,10 +281,17 @@ def home():
     
     # Log dosyasını oku
     log_file = os.path.join(data_dir, 'comment_logs.json')
-    if os.path.exists(log_file):
-        with open(log_file, 'r', encoding='utf-8') as f:
-            global log_entries
-            log_entries = json.load(f)
+    global log_entries
+    
+    try:
+        if os.path.exists(log_file):
+            with open(log_file, 'r', encoding='utf-8') as f:
+                log_entries = json.load(f)
+        else:
+            initialize_logs()
+            log_entries = []
+    except Exception:
+        log_entries = []
     
     if has_credentials:
         with open(credentials_path, 'r') as f:
