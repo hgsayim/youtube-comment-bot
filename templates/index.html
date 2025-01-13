@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube Otomatik Yorum Botu</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        h1, h2 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: #555;
+        }
+        input[type="text"],
+        input[type="number"],
+        input[type="password"],
+        textarea {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        .button-group {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            margin-top: 20px;
+        }
+        button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background-color 0.3s;
+        }
+        #toggleBtn {
+            background-color: #4CAF50;
+            color: white;
+            min-width: 120px;
+        }
+        #toggleBtn.running {
+            background-color: #f44336;
+        }
+        #saveCredentialsBtn {
+            background-color: #2196F3;
+            color: white;
+        }
+        button:hover {
+            opacity: 0.9;
+        }
+        #status {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 4px;
+            text-align: center;
+            display: none;
+        }
+        .success {
+            background-color: #dff0d8;
+            color: #3c763d;
+        }
+        .error {
+            background-color: #f2dede;
+            color: #a94442;
+        }
+        .credentials-section {
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #eee;
+        }
+        .bot-section {
+            margin-top: 30px;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #eee;
+        }
+        .help-text {
+            font-size: 0.9em;
+            color: #666;
+            margin-top: 5px;
+        }
+        .log-section {
+            margin-top: 30px;
+        }
+        .log-entry {
+            padding: 10px;
+            border: 1px solid #ddd;
+            margin-bottom: 10px;
+            border-radius: 4px;
+        }
+        .log-entry.error {
+            border-color: #f44336;
+            background-color: #ffebee;
+        }
+        .log-entry.success {
+            border-color: #4CAF50;
+            background-color: #E8F5E9;
+        }
+        .log-title {
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        .log-time {
+            color: #666;
+            font-size: 0.9em;
+        }
+        .log-comment {
+            margin: 5px 0;
+            color: #333;
+        }
+        .log-error {
+            color: #f44336;
+            margin-top: 5px;
+        }
+        .video-link {
+            color: #2196F3;
+            text-decoration: none;
+        }
+        .video-link:hover {
+            text-decoration: underline;
+        }
+        #resetGoogleAuthBtn.reset {
+            background-color: #FF9800;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="credentials-section">
+            <h2>YouTube API Kimlik Bilgileri</h2>
+            <div class="form-group">
+                <label for="clientId">Client ID:</label>
+                <input type="text" id="clientId" value="{{ client_id }}" placeholder="OAuth 2.0 Client ID">
+                <div class="help-text">Google Cloud Console'dan aldığınız Client ID</div>
+            </div>
+            <div class="form-group">
+                <label for="clientSecret">Client Secret:</label>
+                <input type="password" id="clientSecret" value="{{ client_secret }}" placeholder="OAuth 2.0 Client Secret">
+                <div class="help-text">Google Cloud Console'dan aldığınız Client Secret</div>
+            </div>
+            <div class="button-group">
+                <button id="saveCredentialsBtn">Kimlik Bilgilerini Kaydet</button>
+                <button id="resetGoogleAuthBtn" class="reset">Google Hesabını Sıfırla</button>
+            </div>
+        </div>
+
+        <div class="bot-section">
+            <h2>Yorum Bot Ayarları</h2>
+            <div class="form-group">
+                <label for="searchQuery">Arama Sorgusu:</label>
+                <input type="text" id="searchQuery" placeholder="Örn: orman yangınları">
+            </div>
+            <div class="form-group">
+                <label for="commentText">Yorum Metni:</label>
+                <textarea id="commentText" rows="3" placeholder="Örn: Daha fazla bilgi için: http://example.com"></textarea>
+            </div>
+            <div class="form-group">
+                <label for="interval">Yorum Aralığı (dakika):</label>
+                <input type="number" id="interval" value="5" min="1">
+            </div>
+            <div class="button-group">
+                <button id="toggleBtn" class="{{ 'running' if is_running }}">
+                    {{ 'Durdur' if is_running else 'Başlat' }}
+                </button>
+            </div>
+        </div>
+
+        <div class="log-section">
+            <h2>İşlem Kayıtları</h2>
+            <div id="logContainer">
+                {% for log in log_entries %}
+                <div class="log-entry {{ 'success' if log.success else 'error' }}">
+                    <div class="log-time">{{ log.timestamp }}</div>
+                    <div class="log-title">
+                        <a href="{{ log.video_url }}" target="_blank" class="video-link">{{ log.video_title }}</a>
+                    </div>
+                    <div class="log-comment">Yorum: {{ log.comment }}</div>
+                    {% if not log.success %}
+                    <div class="log-error">Hata: {{ log.error_message }}</div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        <div id="status"></div>
+    </div>
+
+    <script>
+        const toggleBtn = document.getElementById('toggleBtn');
+        const saveCredentialsBtn = document.getElementById('saveCredentialsBtn');
+        const status = document.getElementById('status');
+        const logContainer = document.getElementById('logContainer');
+        const isRunning = {% if is_running %}true{% else %}false{% endif %};
+
+        function updateLogDisplay(logs) {
+            logContainer.innerHTML = logs.map(log => `
+                <div class="log-entry ${log.success ? 'success' : 'error'}">
+                    <div class="log-time">${log.timestamp}</div>
+                    <div class="log-title">
+                        <a href="${log.video_url}" target="_blank" class="video-link">${log.video_title}</a>
+                    </div>
+                    <div class="log-comment">Yorum: ${log.comment}</div>
+                    ${log.error_message ? `<div class="log-error">Hata: ${log.error_message}</div>` : ''}
+                </div>
+            `).join('');
+        }
+
+        let botRunning = isRunning;
+
+        function updateButtonState(running) {
+            botRunning = running;
+            toggleBtn.textContent = running ? 'Durdur' : 'Başlat';
+            toggleBtn.className = running ? 'running' : '';
+        }
+
+        async function refreshLogs() {
+            if (botRunning) {
+                try {
+                    const response = await fetch('/get_logs');
+                    const data = await response.json();
+                    updateLogDisplay(data.logs);
+                    updateButtonState(data.is_running);
+                } catch (error) {
+                    console.error('Error fetching logs:', error);
+                }
+            }
+        }
+
+        // Her 5 saniyede bir logları güncelle
+        setInterval(refreshLogs, 5000);
+
+        saveCredentialsBtn.addEventListener('click', async () => {
+            const clientId = document.getElementById('clientId').value;
+            const clientSecret = document.getElementById('clientSecret').value;
+
+            if (!clientId || !clientSecret) {
+                showStatus('Lütfen Client ID ve Client Secret bilgilerini girin.', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch('/save_credentials', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        client_id: clientId,
+                        client_secret: clientSecret
+                    }),
+                });
+
+                const data = await response.json();
+                if (response.ok) {
+                    showStatus('Kimlik bilgileri başarıyla kaydedildi.', 'success');
+                } else {
+                    showStatus(data.error, 'error');
+                }
+            } catch (error) {
+                showStatus('Kimlik bilgileri kaydedilirken bir hata oluştu.', 'error');
+            }
+        });
+
+        toggleBtn.addEventListener('click', async () => {
+            if (!botRunning) {
+                const searchQuery = document.getElementById('searchQuery').value;
+                const commentText = document.getElementById('commentText').value;
+                const interval = document.getElementById('interval').value;
+
+                if (!searchQuery || !commentText) {
+                    showStatus('Lütfen tüm alanları doldurun.', 'error');
+                    return;
+                }
+
+                try {
+                    const response = await fetch('/start_commenting', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            search_query: searchQuery,
+                            comment_text: commentText,
+                            interval: interval
+                        }),
+                    });
+
+                    const data = await response.json();
+                    if (response.ok) {
+                        showStatus(data.message, 'success');
+                        updateButtonState(true);
+                    } else {
+                        showStatus(data.error, 'error');
+                    }
+                } catch (error) {
+                    showStatus('Bir hata oluştu.', 'error');
+                }
+            } else {
+                try {
+                    const response = await fetch('/stop_commenting', {
+                        method: 'POST',
+                    });
+                    const data = await response.json();
+                    showStatus(data.message, 'success');
+                    updateButtonState(false);
+                } catch (error) {
+                    showStatus('Durdurma işlemi başarısız oldu.', 'error');
+                }
+            }
+        });
+
+        function showStatus(message, type) {
+            status.textContent = message;
+            status.className = type;
+            status.style.display = 'block';
+            setTimeout(() => {
+                status.style.display = 'none';
+            }, 5000);
+        }
+
+        const resetGoogleAuthBtn = document.getElementById('resetGoogleAuthBtn');
+
+        resetGoogleAuthBtn.addEventListener('click', async () => {
+            try {
+                const response = await fetch('/reset_google_auth', {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                
+                if (response.ok) {
+                    showStatus('Google hesap bilgileri başarıyla sıfırlandı. Yeni hesapla giriş yapabilirsiniz.', 'success');
+                } else {
+                    showStatus(data.error, 'error');
+                }
+            } catch (error) {
+                showStatus('Sıfırlama işlemi sırasında bir hata oluştu.', 'error');
+            }
+        });
+    </script>
+</body>
+</html> 
